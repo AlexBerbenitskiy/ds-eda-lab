@@ -27,10 +27,20 @@ export class EDAAppStack extends cdk.Stack {
       receiveMessageWaitTime: cdk.Duration.seconds(10),
     });
 
+    const mailerQ = new sqs.Queue(this, "mailer-queue", {
+      receiveMessageWaitTime: cdk.Duration.seconds(10),
+    });
+
+    
+
+    
+
     // Add an SNS topic
     const newImageTopic = new sns.Topic(this, "NewImageTopic", {
       displayName: "New Image topic",
     });
+
+    
 
     // Change the S3 event notification destination type to SNS
     imagesBucket.addEventNotification(
@@ -38,8 +48,14 @@ export class EDAAppStack extends cdk.Stack {
       new s3n.SnsDestination(newImageTopic)
     );
 
+    
+
+    
+
     // Add a subscriber to the SNS topic
     newImageTopic.addSubscription(new subs.SqsSubscription(imageProcessQueue));
+
+    newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ));
 
     // Lambda functions
 
@@ -54,6 +70,13 @@ export class EDAAppStack extends cdk.Stack {
       }
     );
 
+    const mailerFn = new lambdanode.NodejsFunction(this, "mailer-function", {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      memorySize: 1024,
+      timeout: cdk.Duration.seconds(3),
+      entry: `${__dirname}/../lambdas/mailer.ts`,
+    });
+
     // Event triggers
 
     const newImageEventSource = new events.SqsEventSource(imageProcessQueue, {
@@ -61,11 +84,29 @@ export class EDAAppStack extends cdk.Stack {
       maxBatchingWindow: cdk.Duration.seconds(10),
     });
 
+    const newImageMailEventSource = new events.SqsEventSource(mailerQ, {
+      batchSize: 5,
+      maxBatchingWindow: cdk.Duration.seconds(10),
+    }); 
+
     processImageFn.addEventSource(newImageEventSource);
+    mailerFn.addEventSource(newImageMailEventSource);
 
     // Permissions
 
     imagesBucket.grantRead(processImageFn);
+
+    mailerFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          "ses:SendEmail",
+          "ses:SendRawEmail",
+          "ses:SendTemplatedEmail",
+        ],
+        resources: ["*"],
+      })
+    );
 
     // Output
 
